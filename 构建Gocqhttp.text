@@ -1,0 +1,222 @@
+使用Go-cpHttp服务发送QQ消息
+1、Linux系统安装Go-cphttp服务(本人为Unbuntu20.0.4 AND x86_64)
+查看当前 Linux 系统的架构，可以使用以下命令之一：uname -m
+https://github.com/Mrs4s/go-cqhttp/releases/tag/v1.2.0
+2、安装数据包的签名服务器(使用docker)
+这一步的目的是为了能够正常登录QQ
+安装docker的步骤略过，网络搜即可。
+docker run -d --restart=always --name qsign -p 5709:8080 -e ANDROID_ID={android_id} xzhouqd/qsign:8.9.63
+上面命令中的android_id这只需要在go-cqhttp下的device.json里面就可以找到
+
+将这一串字符串放替换到android_id框里就可以，然后5709:8080前面的5709随便改动，后面的8080不能改.5709注意去服务器放行端口。
+3、第一次启动Go-cphttp，按照屏幕输出走，然后会生成一个配置文件，配置config文件内容只需修改如下内容。其中port端口请自定义(本人此次使用http方式)
+a.配置account账号相关
+按注释，添加账号和密码即可。
+b.配置签名服务    
+sign-servers:
+- url: 'http://xxx:5709'  # 主签名服务器地址， 必填
+c.配置servers服务相关
+servers:
+  - http: # HTTP 通信设置
+      address: 0.0.0.0:5700 # HTTP监听地址
+      timeout: 5 # 反向 HTTP 超时时间, 单位秒，<5 时将被忽略
+      long-polling: # 长轮询拓展
+        enabled: false # 是否开启
+        max-queue-size: 2000 # 消息队列大小，0 表示不限制队列大小，谨慎使用
+      middlewares:
+        <<: *default # 引用默认中间件
+      post: # 反向HTTP POST地址列表
+      - url: 'http://127.0.0.1:5702/'                # 地址
+      #  secret: ''             # 密钥
+        max-retries: 0         # 最大重试，0 时禁用
+        retries-interval: 0 # 重试时间，单位毫秒，0 时立即
+      - url: http://127.0.0.1:5701/ # 地址
+      #  secret: ''                  # 密钥
+        max-retries: 0             # 最大重试，0 时禁用
+        retries-interval: 0      # 重试时间，单位毫秒，0 时立即
+再次启动会让你选择QQ验证方式，自动或者手动都可以，手动的话需要打开F12查看网络复制请求方法的返回值中的值，key叫什么我忘记了，但是在选择手动后，控制台会输出让你输入一个xxx的值，然后enter，之后跟着提示走即可。
+
+4、编写python或者其他语言的代码
+这里我使用的是aiocqhttp库，其API可以参考文档：https://docs.go-cqhttp.org/api
+示例：
+from aiocqhttp import CQHttp, ApiError, Event
+
+bot = CQHttp(
+    api_root='http://127.0.0.1:5700/',  # 如果使用反向 WebSocket，这里不需要传入
+)
+
+@bot.on_message()
+async def handle_msg(event: Event):
+    try:
+        # 参考上面API文档
+        await bot.send_group_msg(group_id=xxx, message='测试信息', auto_escape=True, self_id=xxx)
+    except ApiError:
+        pass
+    # 返回给 OneBot (CQHTTP)，走快速回复途径
+    return {'reply': event.message, 'at_sender': False}
+
+# 接收信息的接口 host代表接收信息的ip,port为端口和config配置文件中的port下的url一致
+if __name__ == '__main__':
+        bot.run(host='127.0.0.1', port=5703)
+验证：
+在群ID为group_id里输入任何信息，QQ号为self_id的机器人都会自动回复。
+控制台会输出
+
+
+
+示例配置文件：
+# go-cqhttp 默认配置文件
+
+account: # 账号相关
+  uin: xxx # QQ账号
+  password: "xxx" # 密码为空时使用扫码登录
+  encrypt: false # 是否开启密码加密
+  status: 0 # 在线状态 请参考 https://docs.go-cqhttp.org/guide/config.html#在线状态
+  relogin: # 重连设置
+    delay: 3 # 首次重连延迟, 单位秒
+    interval: 3 # 重连间隔
+    max-times: 0 # 最大重连次数, 0为无限制
+
+  # 是否使用服务器下发的新地址进行重连
+  # 注意, 此设置可能导致在海外服务器上连接情况更差
+  use-sso-address: true
+  # 是否允许发送临时会话消息
+  allow-temp-session: false
+
+  # 数据包的签名服务器列表，第一个作为主签名服务器，后续作为备用
+  # 兼容 https://github.com/fuqiuluo/unidbg-fetch-qsign
+  # 如果遇到 登录 45 错误, 或者发送信息风控的话需要填入一个或多个服务器
+  # 不建议设置过多，设置主备各一个即可，超过 5 个只会取前五个
+  # 示例:
+  # sign-servers:
+  #   - url: 'http://127.0.0.1:8080' # 本地签名服务器
+  #     key: "114514"  # 相应 key
+  #     authorization: "-"   # authorization 内容, 依服务端设置
+  #   - url: 'https://signserver.example.com' # 线上签名服务器
+  #     key: "114514"
+  #     authorization: "-"
+  #   ...
+  #
+  # 服务器可使用docker在本地搭建或者使用他人开放的服务
+  sign-servers:
+    - url: "http://xxx:5709" # 主签名服务器地址， 必填
+
+  # 判断签名服务不可用（需要切换）的额外规则
+  # 0: 不设置 （此时仅在请求无法返回结果时判定为不可用）
+  # 1: 在获取到的 sign 为空 （若选此建议关闭 auto-register，一般为实例未注册但是请求签名的情况）
+  # 2: 在获取到的 sign 或 token 为空（若选此建议关闭 auto-refresh-token ）
+  rule-change-sign-server: 1
+
+  # 连续寻找可用签名服务器最大尝试次数
+  # 为 0 时会在连续 3 次没有找到可用签名服务器后保持使用主签名服务器，不再尝试进行切换备用
+  # 否则会在达到指定次数后 **退出** 主程序
+  max-check-count: 0
+  # 签名服务请求超时时间(s)
+  sign-server-timeout: 60
+  # 如果签名服务器的版本在1.1.0及以下, 请将下面的参数改成true
+  # 建议使用 1.1.6 以上版本，低版本普遍半个月冻结一次
+  is-below-110: false
+  # 在实例可能丢失（获取到的签名为空）时是否尝试重新注册
+  # 为 true 时，在签名服务不可用时可能每次发消息都会尝试重新注册并签名。
+  # 为 false 时，将不会自动注册实例，在签名服务器重启或实例被销毁后需要重启 go-cqhttp 以获取实例
+  # 否则后续消息将不会正常签名。关闭此项后可以考虑开启签名服务器端 auto_register 避免需要重启
+  # 由于实现问题，当前建议关闭此项，推荐开启签名服务器的自动注册实例
+  auto-register: false
+  # 是否在 token 过期后立即自动刷新签名 token（在需要签名时才会检测到，主要防止 token 意外丢失）
+  # 独立于定时刷新
+  auto-refresh-token: false
+  # 定时刷新 token 间隔时间，单位为分钟, 建议 30~40 分钟, 不可超过 60 分钟
+  # 目前丢失token也不会有太大影响，可设置为 0 以关闭，推荐开启
+  refresh-interval: 40
+
+heartbeat:
+  # 心跳频率, 单位秒
+  # -1 为关闭心跳
+  interval: -1
+
+message:
+  # 上报数据类型
+  # 可选: string,array
+  post-format: string
+  # 是否忽略无效的CQ码, 如果为假将原样发送
+  ignore-invalid-cqcode: false
+  # 是否强制分片发送消息
+  # 分片发送将会带来更快的速度
+  # 但是兼容性会有些问题
+  force-fragment: true
+  # 是否将url分片发送
+  fix-url: true
+  # 下载图片等请求网络代理
+  proxy-rewrite: ""
+  # 是否上报自身消息
+  report-self-message: false
+  # 移除服务端的Reply附带的At
+  remove-reply-at: false
+  # 为Reply附加更多信息
+  extra-reply-data: false
+  # 跳过 Mime 扫描, 忽略错误数据
+  skip-mime-scan: false
+  # 是否自动转换 WebP 图片
+  convert-webp-image: false
+  # download 超时时间(s)
+  http-timeout: 120
+
+output:
+  # 日志等级 trace,debug,info,warn,error
+  log-level: warn
+  # 日志时效 单位天. 超过这个时间之前的日志将会被自动删除. 设置为 0 表示永久保留.
+  log-aging: 15
+  # 是否在每次启动时强制创建全新的文件储存日志. 为 false 的情况下将会在上次启动时创建的日志文件续写
+  log-force-new: true
+  # 是否启用日志颜色
+  log-colorful: true
+  # 是否启用 DEBUG
+  debug: false # 开启调试模式
+
+# 默认中间件锚点
+default-middlewares: &default # 访问密钥, 强烈推荐在公网的服务器设置
+  access-token: ""
+  # 事件过滤器文件目录
+  filter: ""
+  # API限速设置
+  # 该设置为全局生效
+  # 原 cqhttp 虽然启用了 rate_limit 后缀, 但是基本没插件适配
+  # 目前该限速设置为令牌桶算法, 请参考:
+  # https://baike.baidu.com/item/%E4%BB%A4%E7%89%8C%E6%A1%B6%E7%AE%97%E6%B3%95/6597000?fr=aladdin
+  rate-limit:
+    enabled: false # 是否启用限速
+    frequency: 1 # 令牌回复频率, 单位秒
+    bucket: 1 # 令牌桶大小
+
+database: # 数据库相关设置
+  leveldb:
+    # 是否启用内置leveldb数据库
+    # 启用将会增加10-20MB的内存占用和一定的磁盘空间
+    # 关闭将无法使用 撤回 回复 get_msg 等上下文相关功能
+    enable: true
+  sqlite3:
+    # 是否启用内置sqlite3数据库
+    # 启用将会增加一定的内存占用和一定的磁盘空间
+    # 关闭将无法使用 撤回 回复 get_msg 等上下文相关功能
+    enable: false
+    cachettl: 3600000000000 # 1h
+
+servers:
+  - http: # HTTP 通信设置
+      address: 0.0.0.0:5700 # HTTP监听地址
+      timeout: 5 # 反向 HTTP 超时时间, 单位秒，<5 时将被忽略
+      long-polling: # 长轮询拓展
+        enabled: false # 是否开启
+        max-queue-size: 2000 # 消息队列大小，0 表示不限制队列大小，谨慎使用
+      middlewares:
+        <<: *default # 引用默认中间件
+      post: # 反向HTTP POST地址列表
+      - url: 'http://127.0.0.1:5702/'                # 地址
+      #  secret: ''             # 密钥
+        max-retries: 0         # 最大重试，0 时禁用
+        retries-interval: 0 # 重试时间，单位毫秒，0 时立即
+      - url: http://127.0.0.1:5701/ # 地址
+      #  secret: ''                  # 密钥
+        max-retries: 0             # 最大重试，0 时禁用
+        retries-interval: 0      # 重试时间，单位毫秒，0 时立即
+
