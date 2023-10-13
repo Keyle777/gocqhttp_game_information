@@ -10,3 +10,5 @@
 本次开发使用http模式的反向代理，服务器系统的Liunx Ubuntu20.0.4版本的x86_64amd架构
 
 关于此项目中python代码部分，我只是简单的写了一些例子，更多API的调用可以参考Gocqhttp:https://docs.go-cqhttp.org/
+
+此项目中的数据获取部分仅供学习使用！
